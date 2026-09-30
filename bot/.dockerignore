@@ -1,0 +1,5 @@
+.env
+.env.*
+certs/
+bin/
+coverage.*

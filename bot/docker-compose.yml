@@ -1,0 +1,52 @@
+# Минимальный compose для локального запуска.
+#
+# Здесь нет PostgreSQL, Redis и брокеров сообщений — и это осознанно.
+# Бот не владеет бизнес-данными: мероприятия, регистрации и лист ожидания
+# принадлежат Core Backend. Всё, что бот держит в памяти (журнал MockMAX,
+# действия StubCore, защита от дублей), — это отладочные буферы, ради которых
+# не нужна база.
+
+services:
+  bot:
+    build:
+      context: .
+      args:
+        VERSION: ${VERSION:-dev}
+    image: max-bot:${VERSION:-dev}
+    container_name: max-bot
+    restart: unless-stopped
+
+    ports:
+      - "${HTTP_PORT:-8080}:${HTTP_PORT:-8080}"
+
+    # Значения берутся из .env (скопируйте его из .env.example).
+    # Секреты не попадают ни в образ, ни в этот файл.
+    env_file:
+      - .env
+
+    environment:
+      # Явно, чтобы совпало с проброшенным портом и HEALTHCHECK.
+      HTTP_PORT: ${HTTP_PORT:-8080}
+
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O-", "http://127.0.0.1:${HTTP_PORT:-8080}/health"]
+      interval: 30s
+      timeout: 3s
+      start_period: 5s
+      retries: 3
+
+    # Базовые ограничения: процессу не нужны ни запись на диск, ни повышение
+    # привилегий.
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    # Корневая ФС смонтирована только на чтение, поэтому /tmp выносим в память
+    # на случай, если runtime захочет туда что-то положить.
+    tmpfs:
+      - /tmp:size=16m
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

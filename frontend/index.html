@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>Рядом — афиша встреч</title>
+    <link rel="icon" type="image/png" href="/logo_icon.png" />
+    <link rel="apple-touch-icon" href="/logo_icon.png" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <script>
+      (function () {
+        try {
+          var t = localStorage.getItem('afisha.theme');
+          if (!t) t = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+          if (t === 'dark') document.documentElement.classList.add('theme-dark');
+        } catch (e) { /* светлая по умолчанию */ }
+      })();
+    </script>
+    <!-- MAX Bridge: даёт window.WebApp (данные пользователя, шеринг, запрос контакта).
+         Вне MAX скрипт просто не найдёт контейнер — приложение работает в демо-режиме. -->
+    <script src="https://st.max.ru/js/max-web-app.js"></script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>

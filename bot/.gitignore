@@ -1,0 +1,32 @@
+# Секреты. .env.example коммитим, .env — никогда.
+.env
+.env.*
+!.env.example
+
+# Артефакты сборки
+/bin/
+/dist/
+# Бинарник `go build` в корне модуля. Со слэшем: без него шаблон `bot`
+# совпадает с любым каталогом с таким именем, в том числе с cmd/bot/, и git
+# молча не видит точку входа.
+/bot
+*.exe
+*.test
+
+# Покрытие и профили
+coverage.out
+coverage.html
+*.prof
+
+# Редакторы и IDE
+.idea/
+.vscode/
+*.swp
+*~
+.DS_Store
+
+# Go
+vendor/
+go.work
+go.work.sum
+certs/

@@ -1,0 +1,1033 @@
+openapi: 3.0.3
+
+info:
+  title: MAX Bot — Notification API
+  version: "1.0.0"
+  description: |
+    HTTP-контракт чат-бота MAX для каталога бесплатных мероприятий.
+
+    Бот — адаптер между системой и мессенджером MAX. Он **не является**
+    источником истины о мероприятиях, регистрациях, местах и листе ожидания:
+    все бизнес-решения принимает Core Backend. Бот принимает команду
+    «уведомить пользователя», формирует сообщение и кнопки, отправляет его в
+    MAX, а нажатия кнопок возвращает обратно в Core Backend.
+
+    ## Кто вызывает какие эндпоинты
+
+    | Эндпоинт | Вызывающая сторона | Аутентификация |
+    |---|---|---|
+    | `POST /api/v1/notifications` | Core Backend (сейчас — Postman) | `X-Internal-Api-Key` |
+    | `POST /webhooks/max` | MAX | `X-Max-Bot-Api-Secret` |
+    | `GET /health`, `GET /ready` | оркестратор | нет |
+    | `GET/DELETE /dev/*` | разработчик | нет, **только при `APP_ENV=dev`** |
+
+    `X-Internal-Api-Key` и `X-Max-Bot-Api-Secret` — **разные механизмы**.
+    Первый — общий секрет между Core Backend и ботом. Второй задаётся при
+    подписке на webhook и известен MAX. Путать их нельзя.
+
+    ## Время
+
+    Все отметки времени — RFC 3339 со смещением, например
+    `2026-09-22T19:00:00+03:00`. Локализованные строки вида
+    «22 сентября, 19:00» **не принимаются**: бот форматирует дату сам в момент
+    отрисовки сообщения, чтобы контракт не зависел от локали.
+
+    ## Идемпотентность
+
+    `request_id` является ключом идемпотентности. Повторный запрос с тем же
+    `request_id` вернёт `200` и `"status": "duplicate"`, сообщение не будет
+    отправлено второй раз. Реализация — in-memory TTL (по умолчанию 30 минут),
+    она не переживает рестарт и не разделяется между репликами; подробности и
+    ограничения описаны в `docs/ARCHITECTURE.md`.
+
+  contact:
+    name: MAX Bot module
+  license:
+    name: Proprietary
+
+servers:
+  - url: http://localhost:8080
+    description: Локальная разработка (mock mode)
+  - url: https://bot.example.ru
+    description: Боевой контур (заполнить при деплое)
+
+tags:
+  - name: notifications
+    description: Core Backend → Bot. Отправка уведомлений пользователю MAX.
+  - name: webhooks
+    description: MAX → Bot. Входящие события мессенджера.
+  - name: health
+    description: Liveness и readiness пробы.
+  - name: development
+    description: Только при `APP_ENV=dev`. В production эти маршруты не регистрируются и возвращают 404.
+
+paths:
+  /api/v1/notifications:
+    post:
+      tags: [notifications]
+      operationId: sendNotification
+      summary: Отправить уведомление пользователю MAX
+      description: |
+        Формирует сообщение выбранного типа, прикрепляет inline-клавиатуру и
+        отправляет пользователю в MAX.
+
+        Бот не проверяет бизнес-правила: он не знает, есть ли места, можно ли
+        отменить запись и существует ли мероприятие. Ответ `202` означает
+        «сообщение передано в MAX», а не «действие разрешено».
+      security:
+        - InternalApiKey: []
+      parameters:
+        - $ref: '#/components/parameters/RequestIdHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NotificationRequest'
+            examples:
+              registration_created:
+                summary: Пользователь записался
+                value:
+                  request_id: req_reg_created_1
+                  type: registration_created
+                  recipient: { max_user_id: 123456789 }
+                  event:
+                    id: event_42
+                    title: Йога в парке
+                    starts_at: "2026-09-22T19:00:00+03:00"
+                    address: Парк Горького
+                    mini_app_url: https://afisha.example.ru/app/event_42
+                  registration: { id: registration_15 }
+              reminder_24h:
+                summary: Напоминание за 24 часа
+                value:
+                  request_id: req_reminder24_1
+                  type: reminder_24h
+                  recipient: { max_user_id: 123456789 }
+                  event:
+                    id: event_42
+                    title: Йога в парке
+                    starts_at: "2026-09-22T19:00:00+03:00"
+                    address: Парк Горького
+                    mini_app_url: https://afisha.example.ru/app/event_42
+                  registration: { id: registration_15 }
+              confirmation_required:
+                summary: Подтверждение за 6 часов
+                value:
+                  request_id: req_confirm_1
+                  type: confirmation_required
+                  recipient: { max_user_id: 123456789 }
+                  event:
+                    id: event_42
+                    title: Йога в парке
+                    starts_at: "2026-09-22T19:00:00+03:00"
+                    address: Парк Горького
+                    mini_app_url: https://afisha.example.ru/app/event_42
+                  registration: { id: registration_15 }
+              confirmation_retry:
+                summary: Повторное подтверждение
+                value:
+                  request_id: req_confirm_retry_1
+                  type: confirmation_retry
+                  recipient: { max_user_id: 123456789 }
+                  event:
+                    id: event_42
+                    title: Йога в парке
+                    starts_at: "2026-09-22T19:00:00+03:00"
+                    address: Парк Горького
+                    mini_app_url: https://afisha.example.ru/app/event_42
+                  registration: { id: registration_15 }
+              reminder_1h:
+                summary: Напоминание за час
+                value:
+                  request_id: req_reminder1h_1
+                  type: reminder_1h
+                  recipient: { max_user_id: 123456789 }
+                  event:
+                    id: event_42
+                    title: Йога в парке
+                    starts_at: "2026-09-22T19:00:00+03:00"
+                    address: Парк Горького, Главный вход
+                    mini_app_url: https://afisha.example.ru/app/event_42
+                  registration: { id: registration_15 }
+              waitlist_offer:
+                summary: Освободилось место
+                value:
+                  request_id: req_waitlist_1
+                  type: waitlist_offer
+                  recipient: { max_user_id: 123456789 }
+                  event:
+                    id: event_42
+                    title: Йога в парке
+                    starts_at: "2026-09-22T19:00:00+03:00"
+                    address: Парк Горького
+                    mini_app_url: https://afisha.example.ru/app/event_42
+                  registration: { id: registration_15 }
+                  data:
+                    offer_expires_at: "2026-09-22T16:00:00+03:00"
+              event_updated:
+                summary: Мероприятие изменено
+                value:
+                  request_id: req_updated_1
+                  type: event_updated
+                  recipient: { max_user_id: 123456789 }
+                  event:
+                    id: event_42
+                    title: Йога в парке
+                    starts_at: "2026-09-22T20:00:00+03:00"
+                    address: Парк Сокольники
+                    mini_app_url: https://afisha.example.ru/app/event_42
+                  data:
+                    changes:
+                      - field: time
+                        old: "19:00"
+                        new: "20:00"
+                      - field: address
+                        old: Парк Горького
+                        new: Парк Сокольники
+                    organizer_message: Вход со стороны главной аллеи.
+              event_cancelled:
+                summary: Мероприятие отменено
+                value:
+                  request_id: req_cancelled_1
+                  type: event_cancelled
+                  recipient: { max_user_id: 123456789 }
+                  event:
+                    id: event_42
+                    title: Йога в парке
+                    starts_at: "2026-09-22T19:00:00+03:00"
+                    mini_app_url: https://afisha.example.ru/app/event_42
+                  data:
+                    organizer_message: Из-за штормового предупреждения занятие не состоится.
+      responses:
+        '202':
+          description: Сообщение сформировано и передано в MAX.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotificationResponse'
+              example:
+                request_id: req_confirm_1
+                status: sent
+                message_id: mid-abc123
+        '200':
+          description: |
+            Дубликат. `request_id` уже обрабатывался, повторное сообщение не
+            отправлено.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotificationResponse'
+              example:
+                request_id: req_confirm_1
+                status: duplicate
+                duplicate: true
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          description: |
+            MAX отказался доставить сообщение этому пользователю: он
+            остановил бота или ни разу не открывал с ним диалог. В отличие
+            от `502`, повтор не поможет, пока пользователь снова не откроет
+            диалог. Core Backend стоит прекратить повторы и отметить
+            пользователя как недоступного для бота (`bot_available=false`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error:
+                  code: recipient_unavailable
+                  message: "MAX refused delivery: the user stopped the bot or has no dialog with it; retrying will not help"
+                  request_id: req-9217b3805210af54
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '502':
+          $ref: '#/components/responses/UpstreamUnavailable'
+
+  /webhooks/max:
+    post:
+      tags: [webhooks]
+      operationId: receiveMaxUpdate
+      summary: Приём Update от MAX
+      description: |
+        Принимает события мессенджера MAX. Этот эндпоинт вызывает MAX, а не
+        Core Backend.
+
+        **Маршрут существует не всегда.** При `MAX_MODE=real` и
+        `MAX_UPDATES_MODE=polling` он не поднимается и отдаёт `404`: события в
+        этом режиме бот забирает сам через `GET /updates` к MAX,
+        `MAX_WEBHOOK_SECRET` не требуется — значит проверять подпись было бы
+        нечем, а открытый эндпойнт позволил бы кому угодно подтвердить чужую
+        регистрацию. Активный режим виден в `GET /ready` (`updates_mode`).
+
+        Обрабатываются `bot_started`, `message_created` и `message_callback`.
+        Остальные типы подтверждаются и игнорируются.
+
+        **О кодах ответа.** MAX повторяет доставку при не-2xx, поэтому бот
+        отвечает `200` на всё, что он закончил обрабатывать — включая
+        неизвестные типы событий и неразбираемые тела. `4xx` означает
+        «доставка нелегитимна» (неверный секрет), `502` — «сбой на нашей
+        стороне, повтор может помочь».
+
+        **Идентичность пользователя** берётся из `callback.user.user_id`
+        (кто нажал кнопку), а не из `message.recipient.user_id` и никогда не
+        из payload кнопки.
+      security:
+        - MaxWebhookSecret: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MaxUpdate'
+            examples:
+              bot_started:
+                summary: Пользователь открыл диалог с ботом
+                value:
+                  update_type: bot_started
+                  timestamp: 1758556800000
+                  chat_id: 555
+                  user:
+                    user_id: 123456789
+                    first_name: Алексей
+                    name: Алексей
+                    is_bot: false
+              message_created:
+                summary: Пользователь написал свободный текст
+                value:
+                  update_type: message_created
+                  timestamp: 1758556800000
+                  message:
+                    sender: { user_id: 123456789, first_name: Алексей, name: Алексей }
+                    recipient: { chat_id: 555, user_id: 123456789, chat_type: dialog }
+                    body: { mid: mid-1, seq: 1, text: "когда там йога?" }
+              message_callback_confirm:
+                summary: Нажата кнопка «Приду»
+                value:
+                  update_type: message_callback
+                  timestamp: 1758556800000
+                  chat_id: 555
+                  callback:
+                    timestamp: 1758556800000
+                    callback_id: cb-abc-123
+                    payload: v1|confirm|registration_15|event_42
+                    user: { user_id: 123456789, first_name: Алексей, name: Алексей }
+                  message:
+                    sender: { user_id: 1, is_bot: true }
+                    recipient: { chat_id: 555, user_id: 123456789, chat_type: dialog }
+                    body: { mid: mid-1, seq: 1, text: Подтвердите участие }
+      responses:
+        '200':
+          description: |
+            Событие обработано, проигнорировано или распознано как повторная
+            доставка. Во всех случаях MAX не должен повторять доставку.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebhookAck'
+              examples:
+                handled:
+                  value: { status: handled, update_type: message_callback, result: ok }
+                ignored:
+                  value: { status: ignored, update_type: bot_stopped, result: ignored }
+                duplicate:
+                  value: { status: duplicate, update_type: message_callback, result: duplicate }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '502':
+          $ref: '#/components/responses/UpstreamUnavailable'
+
+  /health:
+    get:
+      tags: [health]
+      operationId: getHealth
+      summary: Liveness
+      description: |
+        Процесс жив и обслуживает запросы. Никакого сетевого ввода-вывода не
+        выполняет, поэтому недоступность MAX или Core Backend не приводит к
+        перезапуску исправного бота.
+      security: []
+      responses:
+        '200':
+          description: Процесс работает.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
+              example: { status: ok, version: "1.0.0", uptime_seconds: 3600 }
+
+  /ready:
+    get:
+      tags: [health]
+      operationId: getReady
+      summary: Readiness
+      description: |
+        Проверяет зависимости. В режиме `MAX_MODE=real` выполняет вызов
+        `GET /me` к MAX: недействительный токен — именно та ошибка
+        конфигурации, ради которой эта проба существует. В `MAX_MODE=mock`
+        проверки всегда успешны, поэтому демо работает без каких-либо
+        настроек.
+      security: []
+      responses:
+        '200':
+          description: Все зависимости готовы.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Readiness'
+              example:
+                status: ready
+                updates_mode: webhook
+                dependencies:
+                  - { name: max, mode: mock, status: ok }
+                  - { name: core, mode: stub, status: ok }
+        '503':
+          description: Хотя бы одна зависимость недоступна или настроена неверно.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Readiness'
+              example:
+                status: not_ready
+                updates_mode: polling
+                dependencies:
+                  - { name: max, mode: real, status: error, error: "max get_me: unauthorized" }
+                  - { name: core, mode: stub, status: ok }
+
+  /dev/max/messages:
+    get:
+      tags: [development]
+      operationId: listMockMaxMessages
+      summary: Сообщения, записанные MockMAX
+      description: |
+        **Только при `APP_ENV=dev` и `MAX_MODE=mock`.** В production маршрут
+        не регистрируется и отдаёт 404.
+
+        Возвращает всё, что бот «отправил» в MAX: текст, формат и кнопки с их
+        payload. Это основной инструмент проверки сценария A через Postman.
+      security: []
+      responses:
+        '200':
+          description: Журнал взаимодействий с MAX, от старых к новым.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MockMaxMessages'
+        '404':
+          description: Эндпоинт отсутствует (production или `MAX_MODE=real`).
+    delete:
+      tags: [development]
+      operationId: clearMockMaxMessages
+      summary: Очистить журнал MockMAX
+      security: []
+      responses:
+        '200':
+          description: Журнал очищен.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClearResult'
+              example: { status: cleared, removed: 3 }
+        '404':
+          description: Эндпоинт отсутствует.
+
+  /dev/core/actions:
+    get:
+      tags: [development]
+      operationId: listStubCoreActions
+      summary: Действия, полученные StubCoreGateway
+      description: |
+        **Только при `APP_ENV=dev` и `CORE_MODE=stub`.** В production маршрут
+        не регистрируется и отдаёт 404.
+
+        Показывает, какие действия бот передал бы в Core Backend. Это проверка
+        сценария B: `confirm_registration` здесь означает, что callback был
+        корректно разобран и доведён до границы Core.
+      security: []
+      responses:
+        '200':
+          description: Журнал действий, от старых к новым.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StubCoreActions'
+        '404':
+          description: Эндпоинт отсутствует (production или `CORE_MODE=http`).
+    delete:
+      tags: [development]
+      operationId: clearStubCoreActions
+      summary: Очистить журнал StubCoreGateway
+      security: []
+      responses:
+        '200':
+          description: Журнал очищен.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClearResult'
+              example: { status: cleared, removed: 1 }
+        '404':
+          description: Эндпоинт отсутствует.
+
+components:
+
+  securitySchemes:
+    InternalApiKey:
+      type: apiKey
+      in: header
+      name: X-Internal-Api-Key
+      description: |
+        Общий секрет между Core Backend и ботом (`INTERNAL_API_KEY`).
+        Не путать с `X-Max-Bot-Api-Secret`.
+    MaxWebhookSecret:
+      type: apiKey
+      in: header
+      name: X-Max-Bot-Api-Secret
+      description: |
+        Секрет, переданный при подписке на webhook (`MAX_WEBHOOK_SECRET`).
+        Его присылает MAX, а не Core Backend. Имя заголовка задано MAX.
+
+  parameters:
+    RequestIdHeader:
+      name: X-Request-Id
+      in: header
+      required: false
+      description: |
+        Корреляционный идентификатор. Если передан — используется как есть,
+        попадает в логи и возвращается в ответе, что позволяет связать трассу
+        Core Backend и бота. Если не передан — генерируется.
+      schema:
+        type: string
+        maxLength: 128
+      example: trace-abc-123
+
+  headers:
+    XRequestId:
+      description: Корреляционный идентификатор этого запроса.
+      schema:
+        type: string
+      example: req-9217b3805210af54
+
+  schemas:
+
+    NotificationRequest:
+      type: object
+      additionalProperties: false
+      required: [request_id, type, recipient, event]
+      properties:
+        request_id:
+          type: string
+          minLength: 1
+          maxLength: 256
+          description: |
+            Корреляционный идентификатор и ключ идемпотентности. Повторный
+            запрос с тем же значением не приведёт ко второму сообщению.
+          example: req_confirm_1
+        type:
+          $ref: '#/components/schemas/NotificationType'
+        recipient:
+          $ref: '#/components/schemas/Recipient'
+        event:
+          $ref: '#/components/schemas/Event'
+        registration:
+          allOf:
+            - $ref: '#/components/schemas/Registration'
+          description: |
+            Обязательно для всех типов, кроме `event_updated` и
+            `event_cancelled`: без идентификатора регистрации сообщению нечего
+            подтверждать или отменять.
+        data:
+          $ref: '#/components/schemas/NotificationData'
+
+    NotificationType:
+      type: string
+      description: |
+        | Тип | Кнопки |
+        |---|---|
+        | `registration_created` | Открыть афишу, Отменить запись |
+        | `reminder_24h` | Открыть афишу, Не смогу прийти |
+        | `confirmation_required` | Приду, Не смогу |
+        | `confirmation_retry` | Приду, Не смогу |
+        | `reminder_1h` | Маршрут / Открыть афишу, Не смогу прийти |
+        | `waitlist_offer` | Занять место, Отказаться |
+        | `event_updated` | Открыть афишу |
+        | `event_cancelled` | Открыть афишу |
+      enum:
+        - registration_created
+        - reminder_24h
+        - confirmation_required
+        - confirmation_retry
+        - reminder_1h
+        - waitlist_offer
+        - event_updated
+        - event_cancelled
+
+    Recipient:
+      type: object
+      additionalProperties: false
+      required: [max_user_id]
+      properties:
+        max_user_id:
+          type: integer
+          format: int64
+          minimum: 1
+          description: |
+            Числовой идентификатор пользователя в MAX. Сопоставление
+            «пользователь приложения → пользователь MAX» — зона
+            ответственности Core Backend; бот его не хранит.
+          example: 123456789
+
+    Event:
+      type: object
+      additionalProperties: false
+      required: [id, title, starts_at]
+      properties:
+        id:
+          type: string
+          minLength: 1
+          maxLength: 256
+          description: Идентификатор мероприятия. Не должен содержать символ `|`.
+          example: event_42
+        title:
+          type: string
+          minLength: 1
+          maxLength: 512
+          example: Йога в парке
+        starts_at:
+          type: string
+          format: date-time
+          description: |
+            Начало мероприятия, RFC 3339 со смещением. Бот локализует дату сам
+            при формировании текста.
+          example: "2026-09-22T19:00:00+03:00"
+        address:
+          type: string
+          maxLength: 512
+          example: Парк Горького
+        mini_app_url:
+          type: string
+          format: uri
+          description: |
+            Абсолютная http(s)-ссылка на карточку мероприятия в мини-приложении.
+            Если не передана, используется `MINI_APP_URL`; если и её нет,
+            кнопка-ссылка просто не добавляется.
+          example: https://afisha.example.ru/app/event_42
+
+    Registration:
+      type: object
+      additionalProperties: false
+      required: [id]
+      properties:
+        id:
+          type: string
+          minLength: 1
+          maxLength: 256
+          description: Идентификатор регистрации. Не должен содержать символ `|`.
+          example: registration_15
+
+    NotificationData:
+      type: object
+      additionalProperties: false
+      description: Поля, специфичные для отдельных типов уведомлений.
+      properties:
+        offer_expires_at:
+          type: string
+          format: date-time
+          description: Обязательно для `waitlist_offer`. До какого момента действует предложение места.
+          example: "2026-09-22T16:00:00+03:00"
+        changes:
+          type: array
+          maxItems: 20
+          description: |
+            Перечень изменений для `event_updated`. Для этого типа необходимо
+            передать либо `changes`, либо `organizer_message`.
+          items:
+            $ref: '#/components/schemas/Change'
+        organizer_message:
+          type: string
+          maxLength: 2000
+          description: Произвольный текст организатора, показывается пользователю как есть.
+          example: Вход со стороны главной аллеи.
+
+    Change:
+      type: object
+      additionalProperties: false
+      required: [field]
+      properties:
+        field:
+          type: string
+          description: |
+            Машиночитаемый ключ изменившегося поля. Известные значения —
+            `time`, `address`, `title`, `other`; неизвестные тоже отображаются,
+            что позволяет Core Backend вводить новые виды изменений без релиза
+            бота.
+          example: time
+        old:
+          type: string
+          description: Прежнее значение, уже в человекочитаемом виде.
+          example: "19:00"
+        new:
+          type: string
+          description: Новое значение, уже в человекочитаемом виде.
+          example: "20:00"
+        note:
+          type: string
+          description: Уточнение, если `old`/`new` неприменимы.
+
+    NotificationResponse:
+      type: object
+      required: [request_id, status]
+      properties:
+        request_id:
+          type: string
+          example: req_confirm_1
+        status:
+          type: string
+          enum: [sent, duplicate]
+        message_id:
+          type: string
+          description: Идентификатор сообщения в MAX (в mock-режиме — синтетический).
+          example: mid-abc123
+        duplicate:
+          type: boolean
+          description: Признак повторной обработки того же `request_id`.
+
+    MaxUpdate:
+      type: object
+      required: [update_type]
+      description: |
+        Событие MAX. Описаны только поля, которые читает бот; остальные
+        игнорируются, поэтому расширение формата на стороне MAX не ломает
+        разбор.
+      properties:
+        update_type:
+          type: string
+          description: |
+            Бот обрабатывает `bot_started`, `message_created` и
+            `message_callback`. Прочие типы подтверждаются и игнорируются.
+          example: message_callback
+        timestamp:
+          type: integer
+          format: int64
+          description: Unix-время события в миллисекундах.
+          example: 1758556800000
+        chat_id:
+          type: integer
+          format: int64
+        user_id:
+          type: integer
+          format: int64
+        user_locale:
+          type: string
+        payload:
+          type: string
+          description: Deep-link параметр для `bot_started`.
+        user:
+          $ref: '#/components/schemas/MaxUser'
+        message:
+          $ref: '#/components/schemas/MaxMessage'
+        callback:
+          $ref: '#/components/schemas/MaxCallback'
+
+    MaxUser:
+      type: object
+      properties:
+        user_id: { type: integer, format: int64 }
+        first_name: { type: string }
+        last_name: { type: string }
+        username: { type: string }
+        name: { type: string }
+        is_bot: { type: boolean }
+
+    MaxMessage:
+      type: object
+      properties:
+        sender:
+          $ref: '#/components/schemas/MaxUser'
+        recipient:
+          type: object
+          properties:
+            chat_id: { type: integer, format: int64 }
+            chat_type: { type: string }
+            user_id:
+              type: integer
+              format: int64
+              description: |
+                Адресат диалога. Для `message_callback` это **не обязательно**
+                тот, кто нажал кнопку — идентичность берётся из
+                `callback.user.user_id`.
+        timestamp: { type: integer, format: int64 }
+        body:
+          type: object
+          properties:
+            mid: { type: string }
+            seq: { type: integer, format: int64 }
+            text: { type: string }
+
+    MaxCallback:
+      type: object
+      properties:
+        timestamp: { type: integer, format: int64 }
+        callback_id:
+          type: string
+          description: Идентификатор нажатия. Используется как ключ дедупликации.
+          example: cb-abc-123
+        payload:
+          type: string
+          maxLength: 1024
+          description: |
+            Payload кнопки в формате `v1|<action>|<registration_id>[|<event_id>]`.
+            Коды действий: `confirm`, `cancel`, `wl_accept`, `wl_decline`.
+            Текст кнопки командой не является. Ограничение 1024 байта задано
+            MAX.
+          example: v1|confirm|registration_15|event_42
+        user:
+          allOf:
+            - $ref: '#/components/schemas/MaxUser'
+          description: Пользователь, нажавший кнопку. **Единственный доверенный источник идентичности.**
+
+    WebhookAck:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [handled, ignored, duplicate]
+        update_type:
+          type: string
+        result:
+          type: string
+          enum: [ok, ignored, duplicate, business_error, unavailable, bad_payload]
+
+    Health:
+      type: object
+      properties:
+        status: { type: string, enum: [ok] }
+        version: { type: string }
+        uptime_seconds: { type: integer, format: int64 }
+
+    Readiness:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [ready, not_ready]
+        updates_mode:
+          type: string
+          enum: [webhook, polling]
+          description: >-
+            Откуда бот берёт события: `webhook` (MAX доставляет их на
+            `POST /webhooks/max`) или `polling` (бот сам забирает их через
+            `GET /updates` к MAX). Режимы взаимоисключающие. Поле
+            диагностическое: чаще всего «бот не отвечает на кнопки» — это
+            расхождение между тем, как бот настроен, и тем, как он подписан.
+        dependencies:
+          type: array
+          items:
+            type: object
+            properties:
+              name: { type: string, enum: [max, core] }
+              mode:
+                type: string
+                description: Активный адаптер — `mock`/`real` для MAX, `stub`/`http` для Core.
+              status: { type: string, enum: [ok, error] }
+              error:
+                type: string
+                description: Краткое описание проблемы. Секреты сюда не попадают.
+
+    MockMaxMessages:
+      type: object
+      properties:
+        count: { type: integer }
+        messages:
+          type: array
+          items:
+            $ref: '#/components/schemas/MockMaxRecord'
+
+    MockMaxRecord:
+      type: object
+      properties:
+        seq: { type: integer, format: int64 }
+        kind:
+          type: string
+          enum: [sent, edited, callback_answer]
+          description: |
+            `sent` — отправка сообщения, `edited` — правка, `callback_answer` —
+            ответ на нажатие кнопки (в нём приходит заменяющее сообщение).
+        at: { type: string, format: date-time }
+        request_id: { type: string }
+        message_id: { type: string }
+        user_id: { type: integer, format: int64 }
+        chat_id: { type: integer, format: int64 }
+        callback_id: { type: string }
+        notification:
+          type: string
+          description: Всплывающее уведомление на кнопке.
+        text: { type: string }
+        format: { type: string }
+        keyboard:
+          type: array
+          description: Ряды кнопок.
+          items:
+            type: array
+            items:
+              type: object
+              properties:
+                kind: { type: string, enum: [callback, link, open_app] }
+                text: { type: string }
+                url: { type: string }
+                payload: { type: string }
+
+    StubCoreActions:
+      type: object
+      properties:
+        count: { type: integer }
+        actions:
+          type: array
+          items:
+            $ref: '#/components/schemas/StubCoreAction'
+
+    StubCoreAction:
+      type: object
+      properties:
+        seq: { type: integer, format: int64 }
+        kind:
+          type: string
+          enum: [confirm_registration, cancel_registration, accept_waitlist, decline_waitlist]
+        at: { type: string, format: date-time }
+        registration_id: { type: string }
+        event_id: { type: string }
+        max_user_id:
+          type: integer
+          format: int64
+          description: Взят из webhook Update, не из payload кнопки.
+        request_id: { type: string }
+        occurred_at:
+          type: string
+          format: date-time
+          description: Момент нажатия кнопки по данным MAX.
+
+    ClearResult:
+      type: object
+      properties:
+        status: { type: string, enum: [cleared] }
+        removed: { type: integer }
+
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              enum:
+                - invalid_request
+                - unauthorized
+                - not_found
+                - method_not_allowed
+                - conflict
+                - upstream_unavailable
+                - recipient_unavailable
+                - payload_too_large
+                - internal_error
+              description: |
+                Стабильный машиночитаемый код. `upstream_unavailable`
+                намеренно отделён от `internal_error`: первый имеет смысл
+                повторить, второй — нет. `recipient_unavailable` повторять
+                бессмысленно тоже: пользователь закрыл диалог с ботом.
+            message:
+              type: string
+              description: Пояснение для разработчика. Внутренние ошибки Go сюда не попадают.
+            request_id:
+              type: string
+            details:
+              type: array
+              description: Ошибки по конкретным полям. Возвращаются все сразу.
+              items:
+                type: object
+                properties:
+                  field: { type: string }
+                  message: { type: string }
+
+  responses:
+    ValidationError:
+      description: Тело запроса не прошло валидацию.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error:
+              code: invalid_request
+              message: registration.id is required for type "confirmation_required" (and 1 more problem(s))
+              request_id: req-9217b3805210af54
+              details:
+                - field: event.starts_at
+                  message: must be an RFC3339 timestamp, e.g. 2026-09-22T19:00:00+03:00
+                - field: registration.id
+                  message: is required for type "confirmation_required"
+
+    Unauthorized:
+      description: Неверный или отсутствующий ключ/секрет.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error:
+              code: unauthorized
+              message: invalid or missing X-Internal-Api-Key
+              request_id: req-9217b3805210af54
+
+    MethodNotAllowed:
+      description: Неподдерживаемый HTTP-метод.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+    PayloadTooLarge:
+      description: Тело запроса превышает допустимый размер (64 KiB для API, 256 KiB для webhook).
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+    UpstreamUnavailable:
+      description: |
+        MAX или Core Backend недоступны. Запрос имеет смысл повторить.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error:
+              code: upstream_unavailable
+              message: MAX API is unavailable, retry later
+              request_id: req-9217b3805210af54
+
+    InternalError:
+      description: Непредвиденная ошибка внутри бота.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'

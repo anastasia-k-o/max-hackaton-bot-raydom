@@ -1,0 +1,7 @@
+.env
+/data/
+/bin/
+*.db
+*.db-wal
+*.db-shm
+coverage.out

@@ -1,0 +1,1744 @@
+{
+  "info": {
+    "name": "MAX Bot",
+    "_postman_id": "8f2c1a4e-5d3b-4c7a-9e1f-6b0d2a8c4f19",
+    "description": "Коллекция для ручной проверки чат-бота MAX.\n\n## Быстрый старт\n\n1. Запустите бота: `make run` (по умолчанию mock MAX + stub Core, токен не нужен).\n2. Выберите окружение **MAX Bot — Local**.\n3. Пройдите папки сверху вниз: Health → Notifications → MAX Webhook Simulation → Mock MAX Inspection → Stub Core Inspection.\n\n## Полный сценарий\n\n1. `Notifications → 3. confirmation_required` — бот формирует сообщение с кнопками «Приду» / «Не смогу».\n2. `Mock MAX Inspection → GET сообщения MockMAX` — видно текст и payload кнопок.\n3. `MAX Webhook Simulation → 3. callback «Приду»` — имитация нажатия кнопки.\n4. `Stub Core Inspection → GET действия StubCore` — появилось `confirm_registration`.\n5. `Mock MAX Inspection → GET сообщения MockMAX` — последняя запись `callback_answer` содержит «✅ Участие подтверждено» уже без кнопок действий.\n\n## Переменные\n\nЗначения лежат в окружении **MAX Bot — Local**. `request_id` и `callback_id` генерируются автоматически перед каждым запросом, чтобы защита от дублей не мешала повторным нажатиям в Postman.\n\n## Real MAX\n\nЧтобы отправить сообщение в настоящий MAX, укажите `MAX_BOT_TOKEN` и `MAX_MODE=real` в `.env`, перезапустите бота и поменяйте `max_user_id` на свой реальный идентификатор. Тело запроса и коллекция не меняются — см. `docs/POSTMAN.md`, сценарий 3.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Health",
+      "description": "Пробы состояния. Начните отсюда, чтобы убедиться, что бот поднялся.",
+      "item": [
+        {
+          "name": "GET /health",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/health",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "health"
+              ]
+            },
+            "description": "Liveness: процесс жив. Сетевых вызовов не делает, поэтому недоступность MAX или Core не приводит к перезапуску исправного бота."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "pm.test('response has expected fields', function () {",
+                  "    const body = pm.response.json();",
+                  "    pm.expect(body).to.have.property('status', 'ok');",
+                  "    pm.expect(body).to.have.property('version');",
+                  "    pm.expect(body).to.have.property('uptime_seconds');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /ready",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/ready",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "ready"
+              ]
+            },
+            "description": "Readiness: проверка зависимостей.\n\nВ MAX_MODE=real выполняет GET /me к MAX — недействительный токен обнаружится именно здесь.\nВ mock/stub всегда 200."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "const body = pm.response.json();",
+                  "pm.test('response has expected fields', function () {",
+                  "    pm.expect(body).to.have.property('status', 'ready');",
+                  "    pm.expect(body.dependencies).to.be.an('array').with.lengthOf(2);",
+                  "});",
+                  "body.dependencies.forEach(function (d) {",
+                  "    console.log(d.name + ': mode=' + d.mode + ' status=' + d.status);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Notifications",
+      "description": "Core Backend → Bot. Все восемь типов уведомлений плюс проверки ошибок и идемпотентности.",
+      "item": [
+        {
+          "name": "1. registration_created — Вы записаны",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              },
+              {
+                "key": "X-Internal-Api-Key",
+                "value": "{{internal_api_key}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/notifications",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "notifications"
+              ]
+            },
+            "description": "✅ Вы записаны. Кнопки: «Открыть афишу», «Отменить запись».",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"request_id\": \"{{request_id}}\",\n  \"type\": \"registration_created\",\n  \"recipient\": {\n    \"max_user_id\": {{max_user_id}}\n  },\n  \"event\": {\n    \"id\": \"{{event_id}}\",\n    \"title\": \"Йога в парке\",\n    \"starts_at\": \"{{event_starts_at}}\",\n    \"address\": \"Парк Горького\",\n    \"mini_app_url\": \"{{mini_app_url}}\"\n  },\n  \"registration\": {\n    \"id\": \"{{registration_id}}\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('request_id', 'req_' + pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status code is 202', function () {",
+                  "    pm.response.to.have.status(202);",
+                  "});",
+                  "const body = pm.response.json();",
+                  "pm.test('response has expected fields', function () {",
+                  "    pm.expect(body).to.have.property('request_id');",
+                  "    pm.expect(body).to.have.property('status', 'sent');",
+                  "    pm.expect(body).to.have.property('message_id');",
+                  "});",
+                  "pm.collectionVariables.set('last_message_id', body.message_id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "2. reminder_24h — Напоминание за сутки",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              },
+              {
+                "key": "X-Internal-Api-Key",
+                "value": "{{internal_api_key}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/notifications",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "notifications"
+              ]
+            },
+            "description": "⏰ Напоминание. Кнопки: «Открыть афишу», «Не смогу прийти».",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"request_id\": \"{{request_id}}\",\n  \"type\": \"reminder_24h\",\n  \"recipient\": {\n    \"max_user_id\": {{max_user_id}}\n  },\n  \"event\": {\n    \"id\": \"{{event_id}}\",\n    \"title\": \"Йога в парке\",\n    \"starts_at\": \"{{event_starts_at}}\",\n    \"address\": \"Парк Горького\",\n    \"mini_app_url\": \"{{mini_app_url}}\"\n  },\n  \"registration\": {\n    \"id\": \"{{registration_id}}\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('request_id', 'req_' + pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status code is 202', function () {",
+                  "    pm.response.to.have.status(202);",
+                  "});",
+                  "const body = pm.response.json();",
+                  "pm.test('response has expected fields', function () {",
+                  "    pm.expect(body).to.have.property('request_id');",
+                  "    pm.expect(body).to.have.property('status', 'sent');",
+                  "    pm.expect(body).to.have.property('message_id');",
+                  "});",
+                  "pm.collectionVariables.set('last_message_id', body.message_id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "3. confirmation_required — Подтвердите участие",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              },
+              {
+                "key": "X-Internal-Api-Key",
+                "value": "{{internal_api_key}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/notifications",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "notifications"
+              ]
+            },
+            "description": "❓ Подтвердите участие. Кнопки: «Приду», «Не смогу».\n\nЭто сообщение используется в папке «MAX Webhook Simulation».",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"request_id\": \"{{request_id}}\",\n  \"type\": \"confirmation_required\",\n  \"recipient\": {\n    \"max_user_id\": {{max_user_id}}\n  },\n  \"event\": {\n    \"id\": \"{{event_id}}\",\n    \"title\": \"Йога в парке\",\n    \"starts_at\": \"{{event_starts_at}}\",\n    \"address\": \"Парк Горького\",\n    \"mini_app_url\": \"{{mini_app_url}}\"\n  },\n  \"registration\": {\n    \"id\": \"{{registration_id}}\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('request_id', 'req_' + pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status code is 202', function () {",
+                  "    pm.response.to.have.status(202);",
+                  "});",
+                  "const body = pm.response.json();",
+                  "pm.test('response has expected fields', function () {",
+                  "    pm.expect(body).to.have.property('request_id');",
+                  "    pm.expect(body).to.have.property('status', 'sent');",
+                  "    pm.expect(body).to.have.property('message_id');",
+                  "});",
+                  "pm.collectionVariables.set('last_message_id', body.message_id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "4. confirmation_retry — Повторное подтверждение",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              },
+              {
+                "key": "X-Internal-Api-Key",
+                "value": "{{internal_api_key}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/notifications",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "notifications"
+              ]
+            },
+            "description": "Повторный запрос подтверждения, если пользователь не ответил на первый. Текст и кнопки те же: напоминать человеку, что он проигнорировал прошлое сообщение, смысла нет.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"request_id\": \"{{request_id}}\",\n  \"type\": \"confirmation_retry\",\n  \"recipient\": {\n    \"max_user_id\": {{max_user_id}}\n  },\n  \"event\": {\n    \"id\": \"{{event_id}}\",\n    \"title\": \"Йога в парке\",\n    \"starts_at\": \"{{event_starts_at}}\",\n    \"address\": \"Парк Горького\",\n    \"mini_app_url\": \"{{mini_app_url}}\"\n  },\n  \"registration\": {\n    \"id\": \"{{registration_id}}\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('request_id', 'req_' + pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status code is 202', function () {",
+                  "    pm.response.to.have.status(202);",
+                  "});",
+                  "const body = pm.response.json();",
+                  "pm.test('response has expected fields', function () {",
+                  "    pm.expect(body).to.have.property('request_id');",
+                  "    pm.expect(body).to.have.property('status', 'sent');",
+                  "    pm.expect(body).to.have.property('message_id');",
+                  "});",
+                  "pm.collectionVariables.set('last_message_id', body.message_id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "5. reminder_1h — Скоро начало",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              },
+              {
+                "key": "X-Internal-Api-Key",
+                "value": "{{internal_api_key}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/notifications",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "notifications"
+              ]
+            },
+            "description": "📍 Скоро начало. Кнопки: «Маршрут» (если есть адрес) и «Не смогу прийти».",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"request_id\": \"{{request_id}}\",\n  \"type\": \"reminder_1h\",\n  \"recipient\": {\n    \"max_user_id\": {{max_user_id}}\n  },\n  \"event\": {\n    \"id\": \"{{event_id}}\",\n    \"title\": \"Йога в парке\",\n    \"starts_at\": \"{{event_starts_at}}\",\n    \"address\": \"Парк Горького\",\n    \"mini_app_url\": \"{{mini_app_url}}\"\n  },\n  \"registration\": {\n    \"id\": \"{{registration_id}}\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('request_id', 'req_' + pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status code is 202', function () {",
+                  "    pm.response.to.have.status(202);",
+                  "});",
+                  "const body = pm.response.json();",
+                  "pm.test('response has expected fields', function () {",
+                  "    pm.expect(body).to.have.property('request_id');",
+                  "    pm.expect(body).to.have.property('status', 'sent');",
+                  "    pm.expect(body).to.have.property('message_id');",
+                  "});",
+                  "pm.collectionVariables.set('last_message_id', body.message_id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "6. waitlist_offer — Освободилось место",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              },
+              {
+                "key": "X-Internal-Api-Key",
+                "value": "{{internal_api_key}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/notifications",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "notifications"
+              ]
+            },
+            "description": "🔥 Освободилось место. Кнопки: «Занять место», «Отказаться».\n\nПоле data.offer_expires_at обязательно для этого типа.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"request_id\": \"{{request_id}}\",\n  \"type\": \"waitlist_offer\",\n  \"recipient\": {\n    \"max_user_id\": {{max_user_id}}\n  },\n  \"event\": {\n    \"id\": \"{{event_id}}\",\n    \"title\": \"Йога в парке\",\n    \"starts_at\": \"{{event_starts_at}}\",\n    \"address\": \"Парк Горького\",\n    \"mini_app_url\": \"{{mini_app_url}}\"\n  },\n  \"registration\": {\n    \"id\": \"{{registration_id}}\"\n  },\n  \"data\": {\n    \"offer_expires_at\": \"{{offer_expires_at}}\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('request_id', 'req_' + pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status code is 202', function () {",
+                  "    pm.response.to.have.status(202);",
+                  "});",
+                  "const body = pm.response.json();",
+                  "pm.test('response has expected fields', function () {",
+                  "    pm.expect(body).to.have.property('request_id');",
+                  "    pm.expect(body).to.have.property('status', 'sent');",
+                  "    pm.expect(body).to.have.property('message_id');",
+                  "});",
+                  "pm.collectionVariables.set('last_message_id', body.message_id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "7. event_updated — Мероприятие изменено",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              },
+              {
+                "key": "X-Internal-Api-Key",
+                "value": "{{internal_api_key}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/notifications",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "notifications"
+              ]
+            },
+            "description": "⚠️ Мероприятие изменено. Кнопка: «Открыть афишу».\n\nregistration не нужен: подтверждать нечего. Требуется data.changes или data.organizer_message.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"request_id\": \"{{request_id}}\",\n  \"type\": \"event_updated\",\n  \"recipient\": {\n    \"max_user_id\": {{max_user_id}}\n  },\n  \"event\": {\n    \"id\": \"{{event_id}}\",\n    \"title\": \"Йога в парке\",\n    \"starts_at\": \"{{event_starts_at}}\",\n    \"address\": \"Парк Горького\",\n    \"mini_app_url\": \"{{mini_app_url}}\"\n  },\n  \"data\": {\n    \"changes\": [\n      {\n        \"field\": \"time\",\n        \"old\": \"19:00\",\n        \"new\": \"20:00\"\n      },\n      {\n        \"field\": \"address\",\n        \"old\": \"Парк Горького\",\n        \"new\": \"Парк Сокольники\"\n      }\n    ],\n    \"organizer_message\": \"Вход со стороны главной аллеи.\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('request_id', 'req_' + pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status code is 202', function () {",
+                  "    pm.response.to.have.status(202);",
+                  "});",
+                  "const body = pm.response.json();",
+                  "pm.test('response has expected fields', function () {",
+                  "    pm.expect(body).to.have.property('request_id');",
+                  "    pm.expect(body).to.have.property('status', 'sent');",
+                  "    pm.expect(body).to.have.property('message_id');",
+                  "});",
+                  "pm.collectionVariables.set('last_message_id', body.message_id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "8. event_cancelled — Мероприятие отменено",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              },
+              {
+                "key": "X-Internal-Api-Key",
+                "value": "{{internal_api_key}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/notifications",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "notifications"
+              ]
+            },
+            "description": "❌ Мероприятие отменено. Кнопок действий нет — отменять уже нечего.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"request_id\": \"{{request_id}}\",\n  \"type\": \"event_cancelled\",\n  \"recipient\": {\n    \"max_user_id\": {{max_user_id}}\n  },\n  \"event\": {\n    \"id\": \"{{event_id}}\",\n    \"title\": \"Йога в парке\",\n    \"starts_at\": \"{{event_starts_at}}\",\n    \"address\": \"Парк Горького\",\n    \"mini_app_url\": \"{{mini_app_url}}\"\n  },\n  \"data\": {\n    \"organizer_message\": \"Из-за штормового предупреждения занятие не состоится.\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('request_id', 'req_' + pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status code is 202', function () {",
+                  "    pm.response.to.have.status(202);",
+                  "});",
+                  "const body = pm.response.json();",
+                  "pm.test('response has expected fields', function () {",
+                  "    pm.expect(body).to.have.property('request_id');",
+                  "    pm.expect(body).to.have.property('status', 'sent');",
+                  "    pm.expect(body).to.have.property('message_id');",
+                  "});",
+                  "pm.collectionVariables.set('last_message_id', body.message_id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "9. Ошибка: неизвестный тип (400)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              },
+              {
+                "key": "X-Internal-Api-Key",
+                "value": "{{internal_api_key}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/notifications",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "notifications"
+              ]
+            },
+            "description": "Неизвестный notification type должен дать validation error, а не 500.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"request_id\": \"req_invalid_type\",\n  \"type\": \"send_fireworks\",\n  \"recipient\": {\n    \"max_user_id\": {{max_user_id}}\n  },\n  \"event\": {\n    \"id\": \"{{event_id}}\",\n    \"title\": \"Йога в парке\",\n    \"starts_at\": \"{{event_starts_at}}\",\n    \"address\": \"Парк Горького\",\n    \"mini_app_url\": \"{{mini_app_url}}\"\n  },\n  \"registration\": {\n    \"id\": \"{{registration_id}}\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status code is 400', function () {",
+                  "    pm.response.to.have.status(400);",
+                  "});",
+                  "const body = pm.response.json();",
+                  "pm.test('response has expected fields', function () {",
+                  "    pm.expect(body.error).to.have.property('code', 'invalid_request');",
+                  "    pm.expect(body.error).to.have.property('request_id');",
+                  "    pm.expect(body.error.details).to.be.an('array').that.is.not.empty;",
+                  "});",
+                  "pm.test('the offending field is named', function () {",
+                  "    const fields = body.error.details.map(function (d) { return d.field; });",
+                  "    pm.expect(fields).to.include('type');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "10. Ошибка: нет API-ключа (401)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/notifications",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "notifications"
+              ]
+            },
+            "description": "Без X-Internal-Api-Key эндпоинт закрыт. Это НЕ тот же секрет, что X-Max-Bot-Api-Secret.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"request_id\": \"{{request_id}}\",\n  \"type\": \"reminder_24h\",\n  \"recipient\": {\n    \"max_user_id\": {{max_user_id}}\n  },\n  \"event\": {\n    \"id\": \"{{event_id}}\",\n    \"title\": \"Йога в парке\",\n    \"starts_at\": \"{{event_starts_at}}\",\n    \"address\": \"Парк Горького\",\n    \"mini_app_url\": \"{{mini_app_url}}\"\n  },\n  \"registration\": {\n    \"id\": \"{{registration_id}}\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status code is 401', function () {",
+                  "    pm.response.to.have.status(401);",
+                  "});",
+                  "pm.test('response has expected fields', function () {",
+                  "    pm.expect(pm.response.json().error).to.have.property('code', 'unauthorized');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "11. Идемпотентность: тот же request_id (200 duplicate)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              },
+              {
+                "key": "X-Internal-Api-Key",
+                "value": "{{internal_api_key}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/notifications",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "notifications"
+              ]
+            },
+            "description": "Отправьте этот запрос ДВАЖДЫ.\n\nПервый раз — 202 sent. Второй раз — 200 duplicate, повторное сообщение в MAX не уйдёт.\n\nОграничение: дедупликация хранится в памяти процесса (TTL по умолчанию 30 минут) и не переживает рестарт.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"request_id\": \"req_idempotency_demo\",\n  \"type\": \"reminder_24h\",\n  \"recipient\": {\n    \"max_user_id\": {{max_user_id}}\n  },\n  \"event\": {\n    \"id\": \"{{event_id}}\",\n    \"title\": \"Йога в парке\",\n    \"starts_at\": \"{{event_starts_at}}\",\n    \"address\": \"Парк Горького\",\n    \"mini_app_url\": \"{{mini_app_url}}\"\n  },\n  \"registration\": {\n    \"id\": \"{{registration_id}}\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status code is 202 or 200', function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([202, 200]);",
+                  "});",
+                  "const body = pm.response.json();",
+                  "pm.test('response has expected fields', function () {",
+                  "    pm.expect(body).to.have.property('status');",
+                  "    pm.expect(body.status).to.be.oneOf(['sent', 'duplicate']);",
+                  "});",
+                  "if (pm.response.code === 200) {",
+                  "    pm.test('the repeat is reported as a duplicate', function () {",
+                  "        pm.expect(body.duplicate).to.eql(true);",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "MAX Webhook Simulation",
+      "description": "MAX → Bot. Имитация событий мессенджера, включая нажатия кнопок.",
+      "item": [
+        {
+          "name": "1. bot_started — приветствие",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              },
+              {
+                "key": "X-Max-Bot-Api-Secret",
+                "value": "{{max_webhook_secret}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/webhooks/max",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "webhooks",
+                "max"
+              ]
+            },
+            "description": "Пользователь открыл диалог с ботом. Бот отвечает приветствием со ссылкой на мини-приложение.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"update_type\": \"bot_started\",\n  \"timestamp\": {{now_ms}},\n  \"chat_id\": 555,\n  \"user\": {\n    \"user_id\": {{max_user_id}},\n    \"first_name\": \"Алексей\",\n    \"name\": \"Алексей\",\n    \"is_bot\": false\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('now_ms', Date.now());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "const body = pm.response.json();",
+                  "pm.test('response has expected fields', function () {",
+                  "    pm.expect(body).to.have.property('status');",
+                  "    pm.expect(body).to.have.property('update_type');",
+                  "    pm.expect(body).to.have.property('result');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "2. message_created — свободный текст",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              },
+              {
+                "key": "X-Max-Bot-Api-Secret",
+                "value": "{{max_webhook_secret}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/webhooks/max",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "webhooks",
+                "max"
+              ]
+            },
+            "description": "Бот отвечает fallback-сообщением: каталог и поиск живут в мини-приложении.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"update_type\": \"message_created\",\n  \"timestamp\": {{now_ms}},\n  \"message\": {\n    \"sender\": {\n      \"user_id\": {{max_user_id}},\n      \"first_name\": \"Алексей\",\n      \"name\": \"Алексей\"\n    },\n    \"recipient\": {\n      \"chat_id\": 555,\n      \"user_id\": {{max_user_id}},\n      \"chat_type\": \"dialog\"\n    },\n    \"body\": {\n      \"mid\": \"{{message_mid}}\",\n      \"seq\": 1,\n      \"text\": \"когда там йога?\"\n    }\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('now_ms', Date.now());",
+                  "pm.collectionVariables.set('message_mid', 'mid-' + pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "const body = pm.response.json();",
+                  "pm.test('response has expected fields', function () {",
+                  "    pm.expect(body).to.have.property('status');",
+                  "    pm.expect(body).to.have.property('update_type');",
+                  "    pm.expect(body).to.have.property('result');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "3. callback «Приду» → confirm_registration",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              },
+              {
+                "key": "X-Max-Bot-Api-Secret",
+                "value": "{{max_webhook_secret}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/webhooks/max",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "webhooks",
+                "max"
+              ]
+            },
+            "description": "Нажатие кнопки «Приду».\n\nОбратите внимание: команда берётся из payload, а не из текста кнопки. Идентичность пользователя — из callback.user.user_id, а не из payload.\n\nПосле этого запроса проверьте GET /dev/core/actions — там должен появиться confirm_registration.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"update_type\": \"message_callback\",\n  \"timestamp\": {{now_ms}},\n  \"chat_id\": 555,\n  \"callback\": {\n    \"timestamp\": {{now_ms}},\n    \"callback_id\": \"{{callback_id}}\",\n    \"payload\": \"v1|confirm|{{registration_id}}|{{event_id}}\",\n    \"user\": {\n      \"user_id\": {{max_user_id}},\n      \"first_name\": \"Алексей\",\n      \"name\": \"Алексей\",\n      \"is_bot\": false\n    }\n  },\n  \"message\": {\n    \"sender\": {\n      \"user_id\": 1,\n      \"is_bot\": true\n    },\n    \"recipient\": {\n      \"chat_id\": 555,\n      \"user_id\": {{max_user_id}},\n      \"chat_type\": \"dialog\"\n    },\n    \"body\": {\n      \"mid\": \"{{last_message_id}}\",\n      \"seq\": 1,\n      \"text\": \"Подтвердите участие\"\n    }\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('now_ms', Date.now());",
+                  "pm.collectionVariables.set('callback_id', 'cb-' + pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "const body = pm.response.json();",
+                  "pm.test('response has expected fields', function () {",
+                  "    pm.expect(body).to.have.property('status');",
+                  "    pm.expect(body).to.have.property('update_type');",
+                  "    pm.expect(body).to.have.property('result');",
+                  "});",
+                  "pm.test('the callback was handled', function () {",
+                  "    pm.expect(body.status).to.eql('handled');",
+                  "    pm.expect(body.result).to.eql('ok');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "4. callback «Не смогу» → cancel_registration",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              },
+              {
+                "key": "X-Max-Bot-Api-Secret",
+                "value": "{{max_webhook_secret}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/webhooks/max",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "webhooks",
+                "max"
+              ]
+            },
+            "description": "Нажатие кнопки «Не смогу прийти».",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"update_type\": \"message_callback\",\n  \"timestamp\": {{now_ms}},\n  \"chat_id\": 555,\n  \"callback\": {\n    \"timestamp\": {{now_ms}},\n    \"callback_id\": \"{{callback_id}}\",\n    \"payload\": \"v1|cancel|{{registration_id}}|{{event_id}}\",\n    \"user\": {\n      \"user_id\": {{max_user_id}},\n      \"first_name\": \"Алексей\",\n      \"name\": \"Алексей\",\n      \"is_bot\": false\n    }\n  },\n  \"message\": {\n    \"sender\": {\n      \"user_id\": 1,\n      \"is_bot\": true\n    },\n    \"recipient\": {\n      \"chat_id\": 555,\n      \"user_id\": {{max_user_id}},\n      \"chat_type\": \"dialog\"\n    },\n    \"body\": {\n      \"mid\": \"{{last_message_id}}\",\n      \"seq\": 1,\n      \"text\": \"Подтвердите участие\"\n    }\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('now_ms', Date.now());",
+                  "pm.collectionVariables.set('callback_id', 'cb-' + pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "const body = pm.response.json();",
+                  "pm.test('response has expected fields', function () {",
+                  "    pm.expect(body).to.have.property('status');",
+                  "    pm.expect(body).to.have.property('update_type');",
+                  "    pm.expect(body).to.have.property('result');",
+                  "});",
+                  "pm.test('the callback was handled', function () {",
+                  "    pm.expect(body.status).to.eql('handled');",
+                  "    pm.expect(body.result).to.eql('ok');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "5. callback «Занять место» → accept_waitlist",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              },
+              {
+                "key": "X-Max-Bot-Api-Secret",
+                "value": "{{max_webhook_secret}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/webhooks/max",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "webhooks",
+                "max"
+              ]
+            },
+            "description": "Нажатие кнопки «Занять место» в предложении из листа ожидания.\n\nСообщение должно смениться на «✅ Место ваше».",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"update_type\": \"message_callback\",\n  \"timestamp\": {{now_ms}},\n  \"chat_id\": 555,\n  \"callback\": {\n    \"timestamp\": {{now_ms}},\n    \"callback_id\": \"{{callback_id}}\",\n    \"payload\": \"v1|wl_accept|{{registration_id}}|{{event_id}}\",\n    \"user\": {\n      \"user_id\": {{max_user_id}},\n      \"first_name\": \"Алексей\",\n      \"name\": \"Алексей\",\n      \"is_bot\": false\n    }\n  },\n  \"message\": {\n    \"sender\": {\n      \"user_id\": 1,\n      \"is_bot\": true\n    },\n    \"recipient\": {\n      \"chat_id\": 555,\n      \"user_id\": {{max_user_id}},\n      \"chat_type\": \"dialog\"\n    },\n    \"body\": {\n      \"mid\": \"{{last_message_id}}\",\n      \"seq\": 1,\n      \"text\": \"Подтвердите участие\"\n    }\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('now_ms', Date.now());",
+                  "pm.collectionVariables.set('callback_id', 'cb-' + pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "const body = pm.response.json();",
+                  "pm.test('response has expected fields', function () {",
+                  "    pm.expect(body).to.have.property('status');",
+                  "    pm.expect(body).to.have.property('update_type');",
+                  "    pm.expect(body).to.have.property('result');",
+                  "});",
+                  "pm.test('the callback was handled', function () {",
+                  "    pm.expect(body.status).to.eql('handled');",
+                  "    pm.expect(body.result).to.eql('ok');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "6. callback «Отказаться» → decline_waitlist",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              },
+              {
+                "key": "X-Max-Bot-Api-Secret",
+                "value": "{{max_webhook_secret}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/webhooks/max",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "webhooks",
+                "max"
+              ]
+            },
+            "description": "Отказ от предложенного места.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"update_type\": \"message_callback\",\n  \"timestamp\": {{now_ms}},\n  \"chat_id\": 555,\n  \"callback\": {\n    \"timestamp\": {{now_ms}},\n    \"callback_id\": \"{{callback_id}}\",\n    \"payload\": \"v1|wl_decline|{{registration_id}}|{{event_id}}\",\n    \"user\": {\n      \"user_id\": {{max_user_id}},\n      \"first_name\": \"Алексей\",\n      \"name\": \"Алексей\",\n      \"is_bot\": false\n    }\n  },\n  \"message\": {\n    \"sender\": {\n      \"user_id\": 1,\n      \"is_bot\": true\n    },\n    \"recipient\": {\n      \"chat_id\": 555,\n      \"user_id\": {{max_user_id}},\n      \"chat_type\": \"dialog\"\n    },\n    \"body\": {\n      \"mid\": \"{{last_message_id}}\",\n      \"seq\": 1,\n      \"text\": \"Подтвердите участие\"\n    }\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('now_ms', Date.now());",
+                  "pm.collectionVariables.set('callback_id', 'cb-' + pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "const body = pm.response.json();",
+                  "pm.test('response has expected fields', function () {",
+                  "    pm.expect(body).to.have.property('status');",
+                  "    pm.expect(body).to.have.property('update_type');",
+                  "    pm.expect(body).to.have.property('result');",
+                  "});",
+                  "pm.test('the callback was handled', function () {",
+                  "    pm.expect(body.status).to.eql('handled');",
+                  "    pm.expect(body.result).to.eql('ok');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "7. Ошибка: неверный webhook secret (401)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              },
+              {
+                "key": "X-Max-Bot-Api-Secret",
+                "value": "wrong-secret",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/webhooks/max",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "webhooks",
+                "max"
+              ]
+            },
+            "description": "Неверный секрет должен быть отвергнут без каких-либо побочных эффектов.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"update_type\": \"message_callback\",\n  \"timestamp\": {{now_ms}},\n  \"chat_id\": 555,\n  \"callback\": {\n    \"timestamp\": {{now_ms}},\n    \"callback_id\": \"{{callback_id}}\",\n    \"payload\": \"v1|confirm|{{registration_id}}|{{event_id}}\",\n    \"user\": {\n      \"user_id\": {{max_user_id}},\n      \"first_name\": \"Алексей\",\n      \"name\": \"Алексей\",\n      \"is_bot\": false\n    }\n  },\n  \"message\": {\n    \"sender\": {\n      \"user_id\": 1,\n      \"is_bot\": true\n    },\n    \"recipient\": {\n      \"chat_id\": 555,\n      \"user_id\": {{max_user_id}},\n      \"chat_type\": \"dialog\"\n    },\n    \"body\": {\n      \"mid\": \"{{last_message_id}}\",\n      \"seq\": 1,\n      \"text\": \"Подтвердите участие\"\n    }\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('now_ms', Date.now());",
+                  "pm.collectionVariables.set('callback_id', 'cb-' + pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status code is 401', function () {",
+                  "    pm.response.to.have.status(401);",
+                  "});",
+                  "pm.test('response has expected fields', function () {",
+                  "    pm.expect(pm.response.json().error).to.have.property('code', 'unauthorized');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "8. Устаревшая кнопка: неизвестный payload",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              },
+              {
+                "key": "X-Max-Bot-Api-Secret",
+                "value": "{{max_webhook_secret}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/webhooks/max",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "webhooks",
+                "max"
+              ]
+            },
+            "description": "Неизвестное действие не должно вызывать panic или 500. Бот отвечает пользователю понятным текстом «Эта кнопка больше не работает» и ничего не передаёт в Core.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"update_type\": \"message_callback\",\n  \"timestamp\": {{now_ms}},\n  \"chat_id\": 555,\n  \"callback\": {\n    \"timestamp\": {{now_ms}},\n    \"callback_id\": \"{{callback_id}}\",\n    \"payload\": \"v1|teleport|{{registration_id}}\",\n    \"user\": {\n      \"user_id\": {{max_user_id}},\n      \"first_name\": \"Алексей\",\n      \"name\": \"Алексей\",\n      \"is_bot\": false\n    }\n  },\n  \"message\": {\n    \"sender\": {\n      \"user_id\": 1,\n      \"is_bot\": true\n    },\n    \"recipient\": {\n      \"chat_id\": 555,\n      \"user_id\": {{max_user_id}},\n      \"chat_type\": \"dialog\"\n    },\n    \"body\": {\n      \"mid\": \"{{last_message_id}}\",\n      \"seq\": 1,\n      \"text\": \"Подтвердите участие\"\n    }\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('now_ms', Date.now());",
+                  "pm.collectionVariables.set('callback_id', 'cb-' + pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "const body = pm.response.json();",
+                  "pm.test('response has expected fields', function () {",
+                  "    pm.expect(body).to.have.property('status');",
+                  "    pm.expect(body).to.have.property('update_type');",
+                  "    pm.expect(body).to.have.property('result');",
+                  "});",
+                  "pm.test('the payload was rejected, not crashed on', function () {",
+                  "    pm.expect(body.result).to.eql('bad_payload');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "9. Текст кнопки не является командой",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              },
+              {
+                "key": "X-Max-Bot-Api-Secret",
+                "value": "{{max_webhook_secret}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/webhooks/max",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "webhooks",
+                "max"
+              ]
+            },
+            "description": "Проверка принципа: текст кнопки командой не является. Такой payload отвергается.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"update_type\": \"message_callback\",\n  \"timestamp\": {{now_ms}},\n  \"chat_id\": 555,\n  \"callback\": {\n    \"timestamp\": {{now_ms}},\n    \"callback_id\": \"{{callback_id}}\",\n    \"payload\": \"Приду\",\n    \"user\": {\n      \"user_id\": {{max_user_id}},\n      \"first_name\": \"Алексей\",\n      \"name\": \"Алексей\",\n      \"is_bot\": false\n    }\n  },\n  \"message\": {\n    \"sender\": {\n      \"user_id\": 1,\n      \"is_bot\": true\n    },\n    \"recipient\": {\n      \"chat_id\": 555,\n      \"user_id\": {{max_user_id}},\n      \"chat_type\": \"dialog\"\n    },\n    \"body\": {\n      \"mid\": \"{{last_message_id}}\",\n      \"seq\": 1,\n      \"text\": \"Подтвердите участие\"\n    }\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('now_ms', Date.now());",
+                  "pm.collectionVariables.set('callback_id', 'cb-' + pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "const body = pm.response.json();",
+                  "pm.test('response has expected fields', function () {",
+                  "    pm.expect(body).to.have.property('status');",
+                  "    pm.expect(body).to.have.property('update_type');",
+                  "    pm.expect(body).to.have.property('result');",
+                  "});",
+                  "pm.test('button text is not accepted as a command', function () {",
+                  "    pm.expect(body.result).to.eql('bad_payload');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "10. Неизвестный тип события",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              },
+              {
+                "key": "X-Max-Bot-Api-Secret",
+                "value": "{{max_webhook_secret}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/webhooks/max",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "webhooks",
+                "max"
+              ]
+            },
+            "description": "MAX может присылать события, которых бот не ждёт. Такое событие подтверждается и игнорируется: ответ не-2xx заставил бы MAX повторять доставку бесконечно.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"update_type\": \"chat_title_changed\",\n  \"timestamp\": {{now_ms}},\n  \"user\": {\n    \"user_id\": {{max_user_id}}\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('now_ms', Date.now());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "const body = pm.response.json();",
+                  "pm.test('response has expected fields', function () {",
+                  "    pm.expect(body).to.have.property('status');",
+                  "    pm.expect(body).to.have.property('update_type');",
+                  "    pm.expect(body).to.have.property('result');",
+                  "});",
+                  "pm.test('the update is ignored, not failed', function () {",
+                  "    pm.expect(body.status).to.eql('ignored');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Mock MAX Inspection",
+      "description": "Что бот «отправил» в MAX. Только APP_ENV=dev и MAX_MODE=mock.",
+      "item": [
+        {
+          "name": "GET сообщения MockMAX",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/dev/max/messages",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "dev",
+                "max",
+                "messages"
+              ]
+            },
+            "description": "Всё, что бот «отправил» в MAX: текст, формат и кнопки вместе с payload.\n\nДоступно только при APP_ENV=dev и MAX_MODE=mock. В production маршрут не зарегистрирован и вернёт 404."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "const body = pm.response.json();",
+                  "pm.test('response has expected fields', function () {",
+                  "    pm.expect(body).to.have.property('count');",
+                  "    pm.expect(body.messages).to.be.an('array');",
+                  "});",
+                  "if (body.messages.length > 0) {",
+                  "    const last = body.messages[body.messages.length - 1];",
+                  "    console.log('Последнее сообщение:\\n' + last.text);",
+                  "    if (last.keyboard) {",
+                  "        last.keyboard.forEach(function (row) {",
+                  "            row.forEach(function (b) {",
+                  "                console.log('  [' + b.text + '] -> ' + (b.payload || b.url));",
+                  "            });",
+                  "        });",
+                  "    }",
+                  "    pm.test('recorded message carries its text', function () {",
+                  "        pm.expect(last).to.have.property('text').that.is.not.empty;",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "DELETE очистить журнал MockMAX",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/dev/max/messages",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "dev",
+                "max",
+                "messages"
+              ]
+            },
+            "description": "Очистить журнал перед новым прогоном."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "pm.test('response has expected fields', function () {",
+                  "    pm.expect(pm.response.json()).to.have.property('status', 'cleared');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Stub Core Inspection",
+      "description": "Что бот передал бы в Core Backend. Только APP_ENV=dev и CORE_MODE=stub.",
+      "item": [
+        {
+          "name": "GET действия StubCore",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/dev/core/actions",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "dev",
+                "core",
+                "actions"
+              ]
+            },
+            "description": "Действия, которые бот передал бы в Core Backend.\n\nЗдесь проверяется сценарий B: после нажатия «Приду» должен появиться confirm_registration с правильными registration_id и max_user_id.\n\nДоступно только при APP_ENV=dev и CORE_MODE=stub."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "const body = pm.response.json();",
+                  "pm.test('response has expected fields', function () {",
+                  "    pm.expect(body).to.have.property('count');",
+                  "    pm.expect(body.actions).to.be.an('array');",
+                  "});",
+                  "if (body.actions.length > 0) {",
+                  "    const last = body.actions[body.actions.length - 1];",
+                  "    console.log('Последнее действие: ' + last.kind +",
+                  "                ' registration=' + last.registration_id +",
+                  "                ' max_user_id=' + last.max_user_id);",
+                  "    pm.test('the action names a registration and a user', function () {",
+                  "        pm.expect(last).to.have.property('registration_id').that.is.not.empty;",
+                  "        pm.expect(last.max_user_id).to.be.above(0);",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "DELETE очистить журнал StubCore",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/dev/core/actions",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "dev",
+                "core",
+                "actions"
+              ]
+            },
+            "description": "Очистить журнал действий перед новым прогоном."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "pm.test('response has expected fields', function () {",
+                  "    pm.expect(pm.response.json()).to.have.property('status', 'cleared');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {
+      "key": "request_id",
+      "value": "req_manual_1",
+      "type": "string"
+    },
+    {
+      "key": "callback_id",
+      "value": "cb-manual-1",
+      "type": "string"
+    },
+    {
+      "key": "now_ms",
+      "value": "1758556800000",
+      "type": "string"
+    },
+    {
+      "key": "message_mid",
+      "value": "mid-manual-1",
+      "type": "string"
+    },
+    {
+      "key": "last_message_id",
+      "value": "mock-mid-1",
+      "type": "string"
+    }
+  ]
+}
